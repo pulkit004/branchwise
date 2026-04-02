@@ -1,0 +1,27 @@
+{
+  "description": "Branchwise: auto-load branch-scoped memory at session start and detect branch switches",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks-handlers/session-start.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks-handlers/prompt-submit.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "branchwise",
+  "version": "0.1.0",
+  "description": "Branch-scoped memory for Claude Code — isolate conversation context per git branch",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "branchwise": "./bin/branchwise.mjs"
+  },
+  "main": "dist/server.js",
+  "files": [
+    "dist/",
+    "bin/",
+    "hooks/",
+    "hooks-handlers/",
+    "skills/",
+    ".claude-plugin/",
+    ".mcp.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "git",
+    "branch",
+    "memory",
+    "plugin"
+  ],
+  "license": "MIT"
+}
