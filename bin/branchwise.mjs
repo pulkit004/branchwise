@@ -3,7 +3,7 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 
 const BRANCHWISE_DIR = join(homedir(), ".claude", "branch-memory");
@@ -27,7 +27,7 @@ function getCommonDir() {
   if (result.startsWith("/")) return result;
   const root = run("git rev-parse --show-toplevel");
   if (!root) return result;
-  return run(`cd "${root}" && cd "${result}" && pwd`);
+  return resolve(root, result);
 }
 
 function hash(str) {
@@ -35,11 +35,15 @@ function hash(str) {
 }
 
 function encodeBranch(name) {
-  return name.replace(/\//g, "--");
+  return encodeURIComponent(name);
 }
 
 function decodeBranch(encoded) {
-  return encoded.replace(/--/g, "/");
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
 }
 
 function getContext() {
@@ -143,9 +147,9 @@ function cmdAdd(entry) {
 
   // Trim
   const content = readFileSync(file, "utf-8");
-  const lines = content.split("\n");
+  const lines = content.split("\n").filter(Boolean);
   if (lines.length > MAX_LINES) {
-    writeFileSync(file, lines.slice(lines.length - MAX_LINES).join("\n"));
+    writeFileSync(file, lines.slice(-MAX_LINES).join("\n") + "\n");
   }
 
   console.log(`Saved to "${b}": ${entry}`);

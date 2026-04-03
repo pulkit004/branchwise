@@ -12,26 +12,58 @@ import {
 } from "../src/storage.js";
 import { BRANCHWISE_DIR } from "../src/constants.js";
 
-describe("encodeBranchName", () => {
-  it("encodes slashes as double dashes", () => {
-    expect(encodeBranchName("feat/auth-flow")).toBe("feat--auth-flow");
-    expect(encodeBranchName("fix/ui/button")).toBe("fix--ui--button");
+describe("encodeBranchName (URI encoding)", () => {
+  it("encodes slashes as %2F", () => {
+    expect(encodeBranchName("feat/auth-flow")).toBe("feat%2Fauth-flow");
+    expect(encodeBranchName("fix/ui/button")).toBe("fix%2Fui%2Fbutton");
   });
 
   it("leaves simple names unchanged", () => {
     expect(encodeBranchName("main")).toBe("main");
     expect(encodeBranchName("develop")).toBe("develop");
   });
+
+  it("preserves dashes and dots", () => {
+    expect(encodeBranchName("fix-something")).toBe("fix-something");
+    expect(encodeBranchName("release.v1")).toBe("release.v1");
+  });
 });
 
 describe("decodeBranchName", () => {
-  it("decodes double dashes back to slashes", () => {
-    expect(decodeBranchName("feat--auth-flow")).toBe("feat/auth-flow");
-    expect(decodeBranchName("fix--ui--button")).toBe("fix/ui/button");
+  it("decodes %2F back to slashes", () => {
+    expect(decodeBranchName("feat%2Fauth-flow")).toBe("feat/auth-flow");
   });
 
   it("roundtrips with encodeBranchName", () => {
     const names = ["main", "feat/auth", "fix/ui/modal/close", "release/v1.0"];
+    for (const name of names) {
+      expect(decodeBranchName(encodeBranchName(name))).toBe(name);
+    }
+  });
+
+  it("handles invalid encoded strings gracefully", () => {
+    expect(decodeBranchName("not%encoded%right%")).toBe("not%encoded%right%");
+  });
+});
+
+describe("no branch name collisions", () => {
+  it("fix--something and fix/something encode differently", () => {
+    const a = encodeBranchName("fix--something");
+    const b = encodeBranchName("fix/something");
+    expect(a).not.toBe(b);
+    expect(a).toBe("fix--something");
+    expect(b).toBe("fix%2Fsomething");
+  });
+
+  it("branches with mixed slashes and dashes are unique", () => {
+    const names = ["a--b/c", "a/b--c", "a/b/c", "a--b--c"];
+    const encoded = names.map(encodeBranchName);
+    const unique = new Set(encoded);
+    expect(unique.size).toBe(names.length);
+  });
+
+  it("all encoded names decode back correctly", () => {
+    const names = ["a--b/c", "a/b--c", "fix--thing", "fix/thing"];
     for (const name of names) {
       expect(decodeBranchName(encodeBranchName(name))).toBe(name);
     }
@@ -58,16 +90,10 @@ describe("projectHash", () => {
 });
 
 describe("storage operations", () => {
-  // These tests use the real storage functions which write to BRANCHWISE_DIR.
-  // We'll test read/append/list/remove using a known hash and verify the files.
-  // Since the functions use the global BRANCHWISE_DIR constant, we test behavior
-  // by using a unique hash that won't collide.
-
   const testHash = "test_" + Date.now().toString(36);
   const testRepo = "/tmp/test-repo";
 
   afterEach(() => {
-    // Clean up test files
     const testDir = join(BRANCHWISE_DIR, testHash);
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true });
@@ -122,5 +148,31 @@ describe("storage operations", () => {
     const branches = list(testHash);
     const names = branches.map((b) => b.branch);
     expect(names).toContain("_detached/abc1234");
+  });
+
+  it("handles branches with slashes correctly (no collision)", () => {
+    append(testHash, "fix/something", "slash entry", testRepo);
+    append(testHash, "fix--something", "dash entry", testRepo);
+
+    const slashContent = read(testHash, "fix/something");
+    const dashContent = read(testHash, "fix--something");
+
+    expect(slashContent).toContain("slash entry");
+    expect(slashContent).not.toContain("dash entry");
+    expect(dashContent).toContain("dash entry");
+    expect(dashContent).not.toContain("slash entry");
+  });
+
+  it("trims entries beyond MAX_MEMORY_LINES", () => {
+    // Add 210 entries
+    for (let i = 0; i < 210; i++) {
+      append(testHash, "trim-test", `entry ${i}`, testRepo);
+    }
+    const content = read(testHash, "trim-test");
+    const lines = content!.split("\n").filter(Boolean);
+    expect(lines.length).toBeLessThanOrEqual(200);
+    // Should keep the latest entries
+    expect(content).toContain("entry 209");
+    expect(content).not.toContain("entry 0");
   });
 });
