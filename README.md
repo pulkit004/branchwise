@@ -46,6 +46,14 @@ Plus **auto-save**: Claude proactively saves important decisions, debug findings
 npm install -g branchwise
 ```
 
+> **Note:** Global install requires `npm`. Yarn v4 doesn't support global binaries.
+
+Verify the install:
+
+```bash
+which bw && which branchwise
+```
+
 Then add MCP + hooks to Claude Code (copy-paste each block):
 
 **1. MCP server** — add to your project's `.mcp.json`:
@@ -99,6 +107,12 @@ That's it — branch-scoped memory works now. Start a Claude Code session and it
 
 ```bash
 alias claude='bw'
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc  # or source ~/.bashrc
 ```
 
 This makes `claude --continue` resume the correct branch's session instead of the most recent global one. All other flags pass through untouched. If there's no stored session for the current branch, it falls back to normal `--continue`.
