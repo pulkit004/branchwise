@@ -46,9 +46,9 @@ Plus **auto-save**: Claude proactively saves important decisions, debug findings
 npm install -g branchwise
 ```
 
-### Configure Claude Code
+Then add MCP + hooks to Claude Code (copy-paste each block):
 
-Add the MCP server to your project's `.mcp.json`:
+**1. MCP server** — add to your project's `.mcp.json`:
 
 ```json
 {
@@ -62,7 +62,7 @@ Add the MCP server to your project's `.mcp.json`:
 }
 ```
 
-Add hooks to `~/.claude/settings.json`:
+**2. Hooks** — add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -93,17 +93,15 @@ Add hooks to `~/.claude/settings.json`:
 }
 ```
 
-### Enable branch-scoped sessions
+That's it — branch-scoped memory works now. Start a Claude Code session and it auto-loads memory for your current branch.
 
-Add this alias to your shell profile (`~/.zshrc` or `~/.bashrc`):
+**3. Optional: branch-scoped sessions** — add to `~/.zshrc` or `~/.bashrc`:
 
 ```bash
 alias claude='bw'
 ```
 
-Now `claude --continue` and `claude -c` automatically resume the correct branch's session. All other flags pass through to the real `claude` binary untouched.
-
-**How it works:** The SessionStart hook captures each session's ID and stores it per branch. When you run `claude --continue`, the `bw` wrapper looks up the stored session ID for your current branch and calls `claude --resume <id>` instead. If there's no stored session, it falls back to normal `--continue` behavior.
+This makes `claude --continue` resume the correct branch's session instead of the most recent global one. All other flags pass through untouched. If there's no stored session for the current branch, it falls back to normal `--continue`.
 
 ## Usage
 
