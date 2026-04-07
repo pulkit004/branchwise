@@ -17,20 +17,25 @@ Claude Code's built-in memory is scoped per repository, not per branch. When you
 │  SessionStart hook ──► Load branch memory       │
 │  UserPromptSubmit  ──► Detect branch switch     │
 │  MCP Tools         ──► Read/write branch memory │
+│  SKILL.md          ──► Auto-save decisions       │
 └─────────────────────────────────────────────────┘
          │
          ▼
 ~/.claude/branch-memory/<project-hash>/
   branches/
     main.md
-    feat--auth-flow.md
-    fix--null-pointer.md
+    feat%2Fauth-flow.md
+    fix%2Fnull-pointer.md
+    _detached/
+      abc1234.md
 ```
 
 Three layers:
 1. **Hooks** — Auto-load memory at session start; detect mid-session branch switches
 2. **MCP Server** — 5 tools Claude can call to read/write/manage branch memory
 3. **CLI** — Manual operations outside Claude Code
+
+Plus **auto-save**: Claude proactively saves important decisions, debug findings, and patterns without you asking.
 
 ## Install
 
@@ -40,7 +45,7 @@ npm install -g branchwise
 
 ### Configure Claude Code
 
-Add to `~/.claude/settings.json`:
+Add the MCP server to your project's `.mcp.json`:
 
 ```json
 {
@@ -50,7 +55,14 @@ Add to `~/.claude/settings.json`:
       "command": "npx",
       "args": ["-y", "branchwise"]
     }
-  },
+  }
+}
+```
+
+Add hooks to `~/.claude/settings.json`:
+
+```json
+{
   "hooks": {
     "SessionStart": [
       {
@@ -86,6 +98,7 @@ Just start a Claude Code session. Branchwise automatically:
 - Loads memory for your current branch
 - Detects when you `git checkout` to another branch mid-session
 - Injects the new branch's memory into context
+- Saves important decisions and findings as you work
 
 ### In conversation
 
@@ -103,8 +116,8 @@ Claude can also read branch memory:
 > What do we know about this branch?
 > [Claude calls recall_branch_memory]
 ## Branch Memory: feat/auth
-- [2024-03-15 14:30] [decision] Use Zod for validation
-- [2024-03-15 15:00] [debug] Auth middleware requires session token in cookie, not header
+- [2025-03-15 14:30] [decision] Use Zod for validation
+- [2025-03-15 15:00] [debug] Auth middleware requires session token in cookie, not header
 ```
 
 ### MCP Tools
@@ -138,15 +151,27 @@ Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
     .current-branch           # Tracks branch for switch detection
     branches/
       main.md                 # One markdown file per branch
-      feat--auth-flow.md      # "/" in branch names encoded as "--"
+      feat%2Fauth-flow.md     # "/" URI-encoded as "%2F" (fully reversible)
       _detached/
         abc1234.md            # Detached HEAD keyed by commit SHA
 ```
 
 - Max 200 lines per branch (oldest entries trimmed on overflow)
 - Human-readable markdown files
+- Atomic writes with temp file + rename (safe for concurrent access)
+- Lock file protection to prevent trim race conditions
+- Symlink-safe: all file operations validate paths and skip symlinks
 - Separate from Claude Code internals (`~/.claude/projects/`)
 - Worktree-safe: uses `git rev-parse --git-common-dir` to normalize
+
+## Security
+
+- **Path traversal**: Branch names encoded with `encodeURIComponent`; detached HEAD SHAs sanitized with `basename()`
+- **Symlink attacks**: All reads/writes use `lstatSync` to detect and skip symlinks; `realpathSync` validates paths stay within storage directory
+- **Shell injection**: No user input interpolated into shell commands; git helpers use `execSync` with hardcoded commands and `cwd` option
+- **JSON injection**: Hook output escapes all control characters (U+0000–U+001F) per JSON spec
+- **Input validation**: Zod schemas enforce max lengths (10K for entries, 500 for branch names)
+- **Race conditions**: Atomic rename for file trimming; exclusive lock file prevents concurrent trim corruption
 
 ## Edge Cases
 
@@ -157,11 +182,12 @@ Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
 | Branch delete | Memory persists on disk; `branchwise gc` cleans up |
 | Git worktrees | All worktrees of same repo share memory (normalized via git common dir) |
 | No git repo | Gracefully no-ops |
+| Detached HEAD GC | Auto-cleaned after 30 days |
 
 ## Development
 
 ```bash
-git clone https://github.com/pulsevortex/branchwise.git
+git clone https://github.com/pulkit004/branchwise.git
 cd branchwise
 npm install
 npm run build

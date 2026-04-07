@@ -3,8 +3,8 @@ import * as storage from "../storage.js";
 import { getCurrentBranch, getDetachedCommit, getGitCommonDir, getRepoRoot, isGitRepo } from "../git.js";
 
 export const schema = z.object({
-  entry: z.string().describe("The memory entry to save for this branch"),
-  branch: z.string().optional().describe("Target branch (defaults to current branch)"),
+  entry: z.string().min(1).max(10_000).describe("The memory entry to save for this branch"),
+  branch: z.string().max(500).optional().describe("Target branch (defaults to current branch)"),
 });
 
 export type Input = z.infer<typeof schema>;

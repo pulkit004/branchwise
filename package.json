@@ -1,6 +1,6 @@
 {
   "name": "branchwise",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Branch-scoped memory for Claude Code — isolate conversation context per git branch",
   "type": "module",
   "engines": {
@@ -34,6 +34,14 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pulkit004/branchwise.git"
+  },
+  "homepage": "https://github.com/pulkit004/branchwise#readme",
+  "bugs": {
+    "url": "https://github.com/pulkit004/branchwise/issues"
   },
   "keywords": [
     "claude",

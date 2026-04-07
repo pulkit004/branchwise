@@ -3,7 +3,7 @@ import * as storage from "../storage.js";
 import { getCurrentBranch, getDetachedCommit, getGitCommonDir, isGitRepo } from "../git.js";
 
 export const schema = z.object({
-  branch: z.string().optional().describe("Branch to recall memory for (defaults to current branch)"),
+  branch: z.string().max(500).optional().describe("Branch to recall memory for (defaults to current branch)"),
 });
 
 export type Input = z.infer<typeof schema>;

@@ -1,199 +1,30 @@
 #!/usr/bin/env node
 
-import { execSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, unlinkSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const BRANCHWISE_DIR = join(homedir(), ".claude", "branch-memory");
-const MAX_LINES = 200;
+// Import from compiled dist/ — single source of truth
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const dist = join(__dirname, "..", "dist");
 
-function run(cmd) {
-  try {
-    return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-  } catch {
-    return null;
-  }
-}
+const { encodeBranchName, decodeBranchName, projectHash, append, read, list, remove, gc } = await import(join(dist, "storage.js"));
+const { getCurrentBranch, getGitCommonDir, getDetachedCommit, isGitRepo } = await import(join(dist, "git.js"));
 
-function getCurrentBranch() {
-  return run("git symbolic-ref --short HEAD");
-}
-
-function getCommonDir() {
-  const result = run("git rev-parse --git-common-dir");
-  if (!result) return null;
-  if (result.startsWith("/")) return result;
-  const root = run("git rev-parse --show-toplevel");
-  if (!root) return result;
-  return resolve(root, result);
-}
-
-function hash(str) {
-  return createHash("sha256").update(str).digest("hex").slice(0, 12);
-}
-
-function encodeBranch(name) {
-  return encodeURIComponent(name);
-}
-
-function decodeBranch(encoded) {
-  try {
-    return decodeURIComponent(encoded);
-  } catch {
-    return encoded;
-  }
-}
+// --- Helpers ---
 
 function getContext() {
-  const commonDir = getCommonDir();
+  if (!isGitRepo()) {
+    console.error("Error: not inside a git repository.");
+    process.exit(1);
+  }
+  const commonDir = getGitCommonDir();
   if (!commonDir) {
-    console.error("Error: Not inside a git repository.");
+    console.error("Error: could not determine git repository root.");
     process.exit(1);
   }
-  const projectHash = hash(commonDir);
-  const branch = getCurrentBranch();
-  return { projectHash, branch, commonDir };
-}
-
-function branchFile(projectHash, branch) {
-  if (branch.startsWith("_detached/")) {
-    const sha = branch.replace("_detached/", "");
-    return join(BRANCHWISE_DIR, projectHash, "branches", "_detached", `${sha}.md`);
-  }
-  return join(BRANCHWISE_DIR, projectHash, "branches", `${encodeBranch(branch)}.md`);
-}
-
-// --- Commands ---
-
-function cmdList() {
-  const { projectHash } = getContext();
-  const dir = join(BRANCHWISE_DIR, projectHash, "branches");
-  if (!existsSync(dir)) {
-    console.log("No branch memories found.");
-    return;
-  }
-
-  const entries = [];
-  for (const file of readdirSync(dir)) {
-    if (file === "_detached") continue;
-    if (!file.endsWith(".md")) continue;
-    const filePath = join(dir, file);
-    const stat = statSync(filePath);
-    const content = readFileSync(filePath, "utf-8");
-    const lines = content.split("\n").filter(Boolean).length;
-    entries.push({ branch: decodeBranch(file.replace(".md", "")), lines, mtime: stat.mtime });
-  }
-
-  // Detached
-  const detachedDir = join(dir, "_detached");
-  if (existsSync(detachedDir)) {
-    for (const file of readdirSync(detachedDir)) {
-      if (!file.endsWith(".md")) continue;
-      const filePath = join(detachedDir, file);
-      const stat = statSync(filePath);
-      const content = readFileSync(filePath, "utf-8");
-      const lines = content.split("\n").filter(Boolean).length;
-      entries.push({ branch: `_detached/${file.replace(".md", "")}`, lines, mtime: stat.mtime });
-    }
-  }
-
-  if (entries.length === 0) {
-    console.log("No branch memories found.");
-    return;
-  }
-
-  entries.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-  console.log("Branch memories:\n");
-  for (const e of entries) {
-    const age = timeSince(e.mtime);
-    console.log(`  ${e.branch} — ${e.lines} entries, updated ${age}`);
-  }
-}
-
-function cmdShow(targetBranch) {
-  const { projectHash, branch } = getContext();
-  const b = targetBranch || branch || "main";
-  const file = branchFile(projectHash, b);
-
-  if (!existsSync(file)) {
-    console.log(`No memory found for branch "${b}".`);
-    return;
-  }
-
-  console.log(`Branch memory for "${b}":\n`);
-  console.log(readFileSync(file, "utf-8"));
-}
-
-function cmdAdd(entry) {
-  if (!entry) {
-    console.error("Usage: branchwise add <entry>");
-    process.exit(1);
-  }
-
-  const { projectHash, branch, commonDir } = getContext();
-  const b = branch || `_detached/${run("git rev-parse --short HEAD") || "unknown"}`;
-  const file = branchFile(projectHash, b);
-
-  mkdirSync(dirname(file), { recursive: true });
-
-  // Also ensure meta
-  const metaDir = join(BRANCHWISE_DIR, projectHash);
-  mkdirSync(join(metaDir, "branches", "_detached"), { recursive: true });
-
-  const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-  appendFileSync(file, `- [${timestamp}] ${entry}\n`);
-
-  // Trim
-  const content = readFileSync(file, "utf-8");
-  const lines = content.split("\n").filter(Boolean);
-  if (lines.length > MAX_LINES) {
-    writeFileSync(file, lines.slice(-MAX_LINES).join("\n") + "\n");
-  }
-
-  console.log(`Saved to "${b}": ${entry}`);
-}
-
-function cmdClear(targetBranch) {
-  const { projectHash, branch } = getContext();
-  const b = targetBranch || branch;
-  if (!b) {
-    console.error("Could not determine branch. Specify one: branchwise clear <branch>");
-    process.exit(1);
-  }
-
-  const file = branchFile(projectHash, b);
-  if (!existsSync(file)) {
-    console.log(`No memory found for branch "${b}".`);
-    return;
-  }
-
-  unlinkSync(file);
-  console.log(`Cleared memory for "${b}".`);
-}
-
-function cmdGc() {
-  const { projectHash } = getContext();
-  const localBranches = run("git for-each-ref --format='%(refname:short)' refs/heads/")?.split("\n").filter(Boolean) || [];
-  const dir = join(BRANCHWISE_DIR, projectHash, "branches");
-  if (!existsSync(dir)) {
-    console.log("Nothing to clean up.");
-    return;
-  }
-
-  let removed = 0;
-  for (const file of readdirSync(dir)) {
-    if (file === "_detached" || !file.endsWith(".md")) continue;
-    const branch = decodeBranch(file.replace(".md", ""));
-    if (!localBranches.includes(branch)) {
-      unlinkSync(join(dir, file));
-      console.log(`  Removed: ${branch}`);
-      removed++;
-    }
-  }
-
-  console.log(removed ? `\nCleaned up ${removed} orphaned memories.` : "Nothing to clean up.");
+  const hash = projectHash(commonDir);
+  const branch = getCurrentBranch() ?? `_detached/${getDetachedCommit() ?? "unknown"}`;
+  return { hash, branch };
 }
 
 function timeSince(date) {
@@ -202,6 +33,74 @@ function timeSince(date) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// --- Commands ---
+
+function cmdList() {
+  const { hash } = getContext();
+  const branches = list(hash);
+
+  if (branches.length === 0) {
+    console.log("No branch memories found.");
+    return;
+  }
+
+  console.log("Branch memories:\n");
+  for (const b of branches) {
+    console.log(`  ${b.branch} — ${b.lines} entries, updated ${timeSince(b.lastModified)}`);
+  }
+}
+
+function cmdShow(targetBranch) {
+  const { hash, branch } = getContext();
+  const b = targetBranch || branch;
+  const content = read(hash, b);
+
+  if (!content) {
+    console.log(`No memory found for branch "${b}".`);
+    return;
+  }
+
+  console.log(`Branch memory for "${b}":\n`);
+  console.log(content);
+}
+
+function cmdAdd(entry) {
+  if (!entry) {
+    console.error("Usage: branchwise add <entry>");
+    process.exit(1);
+  }
+
+  const { hash, branch } = getContext();
+  const commonDir = getGitCommonDir();
+  append(hash, branch, entry, commonDir);
+  console.log(`Saved to "${branch}": ${entry}`);
+}
+
+function cmdClear(targetBranch) {
+  const { hash, branch } = getContext();
+  const b = targetBranch || branch;
+
+  if (remove(hash, b)) {
+    console.log(`Cleared memory for "${b}".`);
+  } else {
+    console.log(`No memory found for branch "${b}".`);
+  }
+}
+
+function cmdGc() {
+  const { hash } = getContext();
+  const removed = gc(hash);
+
+  if (removed.length === 0) {
+    console.log("Nothing to clean up.");
+  } else {
+    for (const b of removed) {
+      console.log(`  Removed: ${b}`);
+    }
+    console.log(`\nCleaned up ${removed.length} orphaned memories.`);
+  }
 }
 
 function printHelp() {
@@ -223,27 +122,15 @@ Usage:
 const [, , command, ...rest] = process.argv;
 
 switch (command) {
-  case "list":
-    cmdList();
-    break;
-  case "show":
-    cmdShow(rest[0]);
-    break;
-  case "add":
-    cmdAdd(rest.join(" "));
-    break;
-  case "clear":
-    cmdClear(rest[0]);
-    break;
-  case "gc":
-    cmdGc();
-    break;
+  case "list":    cmdList(); break;
+  case "show":    cmdShow(rest[0]); break;
+  case "add":     cmdAdd(rest.join(" ")); break;
+  case "clear":   cmdClear(rest[0]); break;
+  case "gc":      cmdGc(); break;
   case "help":
   case "--help":
   case "-h":
-  case undefined:
-    printHelp();
-    break;
+  case undefined: printHelp(); break;
   default:
     console.error(`Unknown command: ${command}`);
     printHelp();

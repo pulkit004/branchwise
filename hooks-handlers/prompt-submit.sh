@@ -1,50 +1,17 @@
 #!/usr/bin/env bash
 # Branchwise: Detect branch switch mid-session and re-inject branch memory.
-# Pure bash — no python3 dependency.
 
 set -euo pipefail
 
-# --- Helpers ---
-
-json_escape() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  s="${s//$'\t'/\\t}"
-  printf '%s' "$s"
-}
-
-uri_encode() {
-  local string="$1" i char hex
-  local out=""
-  for (( i=0; i<${#string}; i++ )); do
-    char="${string:$i:1}"
-    case "$char" in
-      [a-zA-Z0-9._~-]) out+="$char" ;;
-      *) hex=$(printf '%%%02X' "'$char"); out+="$hex" ;;
-    esac
-  done
-  printf '%s' "$out"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 # --- Main ---
 
-COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
-if [ -z "$COMMON_DIR" ]; then
-  echo '{}'; exit 0
-fi
+COMMON_DIR=$(resolve_common_dir) || { echo '{}'; exit 0; }
 
-# Resolve relative paths
-if [[ ! "$COMMON_DIR" = /* ]]; then
-  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$REPO_ROOT" ]; then
-    COMMON_DIR=$(cd "$REPO_ROOT" && cd "$COMMON_DIR" && pwd 2>/dev/null || true)
-  fi
-fi
-
-PROJECT_HASH=$(printf '%s' "$COMMON_DIR" | shasum -a 256 | cut -c1-12)
+PROJECT_HASH=$(get_project_hash "$COMMON_DIR")
 STATE_FILE="$HOME/.claude/branch-memory/$PROJECT_HASH/.current-branch"
 
 if [ ! -f "$STATE_FILE" ]; then
@@ -60,8 +27,15 @@ fi
 
 # Branch changed — update state and inject new memory
 printf '%s' "$CURRENT_BRANCH" > "$STATE_FILE" 2>/dev/null || true
-SAFE_BRANCH=$(uri_encode "$CURRENT_BRANCH")
-MEMORY_FILE="$HOME/.claude/branch-memory/$PROJECT_HASH/branches/$SAFE_BRANCH.md"
+
+# Build memory file path — detached HEADs use a subdirectory, not URI encoding
+if [[ "$CURRENT_BRANCH" == _detached/* ]]; then
+  COMMIT_SHA="${CURRENT_BRANCH#_detached/}"
+  MEMORY_FILE="$HOME/.claude/branch-memory/$PROJECT_HASH/branches/_detached/$COMMIT_SHA.md"
+else
+  SAFE_BRANCH=$(uri_encode "$CURRENT_BRANCH")
+  MEMORY_FILE="$HOME/.claude/branch-memory/$PROJECT_HASH/branches/$SAFE_BRANCH.md"
+fi
 
 ESCAPED_PREV=$(json_escape "$PREV_BRANCH")
 ESCAPED_CURR=$(json_escape "$CURRENT_BRANCH")

@@ -10,15 +10,15 @@ import * as gcTool from "./tools/gc.js";
 
 const server = new McpServer({
   name: "branchwise",
-  version: "0.1.0",
+  version: "0.2.1",
 });
 
 server.tool(
   "remember_for_branch",
   "Save a memory entry scoped to the current git branch. Use this to persist decisions, patterns, debugging findings, or context across sessions.",
   {
-    entry: z.string().describe("The memory entry to save"),
-    branch: z.string().optional().describe("Target branch (defaults to current)"),
+    entry: z.string().min(1).max(10_000).describe("The memory entry to save"),
+    branch: z.string().max(500).optional().describe("Target branch (defaults to current)"),
   },
   async (input) => {
     const result = await remember.execute(input);
@@ -30,7 +30,7 @@ server.tool(
   "recall_branch_memory",
   "Read all memory entries for the current (or specified) git branch.",
   {
-    branch: z.string().optional().describe("Branch to recall (defaults to current)"),
+    branch: z.string().max(500).optional().describe("Branch to recall (defaults to current)"),
   },
   async (input) => {
     const result = await recall.execute(input);
@@ -52,7 +52,7 @@ server.tool(
   "forget_branch_memory",
   "Delete all memory for a specific branch.",
   {
-    branch: z.string().describe("Branch name whose memory to delete"),
+    branch: z.string().min(1).max(500).describe("Branch name whose memory to delete"),
   },
   async (input) => {
     const result = await forget.execute(input);

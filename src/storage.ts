@@ -8,14 +8,14 @@ import {
   unlinkSync,
   renameSync,
   readdirSync,
-  statSync,
+  lstatSync,
+  realpathSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import {
   BRANCHWISE_DIR,
   MAX_MEMORY_LINES,
   META_FILE,
-  CURRENT_BRANCH_FILE,
   BRANCHES_DIR,
   DETACHED_DIR,
   DETACHED_MAX_AGE_MS,
@@ -60,17 +60,40 @@ function branchesDir(hash: string): string {
 
 function branchFile(hash: string, branch: string): string {
   if (branch.startsWith("_detached/")) {
-    const sha = branch.replace("_detached/", "");
+    const sha = basename(branch.replace("_detached/", ""));
     return join(branchesDir(hash), DETACHED_DIR, `${sha}.md`);
   }
   return join(branchesDir(hash), `${encodeBranchName(branch)}.md`);
 }
 
-function ensureDir(dir: string): void {
+const BRANCHWISE_DIR_PREFIX = BRANCHWISE_DIR + "/";
+
+function isPathSafe(filePath: string): boolean {
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    const real = realpathSync(filePath);
+    return real === BRANCHWISE_DIR || real.startsWith(BRANCHWISE_DIR_PREFIX);
+  } catch {
+    // File doesn't exist yet — validate the parent directory
+    const parent = dirname(filePath);
+    try {
+      const realParent = realpathSync(parent);
+      return realParent === BRANCHWISE_DIR || realParent.startsWith(BRANCHWISE_DIR_PREFIX);
+    } catch {
+      return false;
     }
+  }
+}
+
+function ensureDir(dir: string): void {
+  if (existsSync(dir)) {
+    const stat = lstatSync(dir);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Branchwise: refusing to follow symlink at ${dir}`);
+    }
+    return;
+  }
+  try {
+    mkdirSync(dir, { recursive: true });
   } catch (err) {
     throw new Error(`Branchwise: failed to create directory ${dir}: ${err}`);
   }
@@ -94,27 +117,6 @@ function ensureMeta(hash: string, repoPath: string): void {
   }
 }
 
-// --- Current branch state ---
-
-export function readCurrentBranch(hash: string): string | null {
-  const file = join(projectDir(hash), CURRENT_BRANCH_FILE);
-  try {
-    if (!existsSync(file)) return null;
-    return readFileSync(file, "utf-8").trim();
-  } catch {
-    return null;
-  }
-}
-
-export function writeCurrentBranch(hash: string, branch: string): void {
-  try {
-    ensureDir(projectDir(hash));
-    writeFileSync(join(projectDir(hash), CURRENT_BRANCH_FILE), branch);
-  } catch {
-    // non-fatal — state file is best-effort
-  }
-}
-
 // --- Core storage operations ---
 
 export interface BranchInfo {
@@ -127,6 +129,8 @@ export function read(hash: string, branch: string): string | null {
   const file = branchFile(hash, branch);
   try {
     if (!existsSync(file)) return null;
+    if (lstatSync(file).isSymbolicLink()) return null;
+    if (!isPathSafe(file)) return null;
     return readFileSync(file, "utf-8");
   } catch {
     return null;
@@ -138,20 +142,46 @@ export function append(hash: string, branch: string, entry: string, repoPath: st
   const file = branchFile(hash, branch);
   ensureDir(dirname(file));
 
+  if (!isPathSafe(file)) {
+    throw new Error(`Branchwise: refusing to write outside storage directory`);
+  }
+  if (existsSync(file) && lstatSync(file).isSymbolicLink()) {
+    throw new Error(`Branchwise: refusing to follow symlink at ${file}`);
+  }
+
   const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
   const line = `- [${timestamp}] ${entry}\n`;
 
+  // Lock file to prevent concurrent trim races
+  const lockFile = file + ".lock";
   try {
     appendFileSync(file, line);
 
-    // Trim to MAX_MEMORY_LINES using atomic rename
+    // Trim to MAX_MEMORY_LINES using atomic rename with lock
     const content = readFileSync(file, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     if (lines.length > MAX_MEMORY_LINES) {
-      const trimmed = lines.slice(-MAX_MEMORY_LINES).join("\n") + "\n";
-      const tmp = file + "." + randomUUID().slice(0, 8);
-      writeFileSync(tmp, trimmed);
-      renameSync(tmp, file); // atomic on same filesystem
+      // Clear stale locks older than 30 seconds
+      try {
+        const lockStat = lstatSync(lockFile);
+        if (Date.now() - lockStat.mtimeMs > 30_000) {
+          unlinkSync(lockFile);
+        }
+      } catch { /* lock doesn't exist, proceed */ }
+
+      try {
+        writeFileSync(lockFile, String(process.pid), { flag: "wx" }); // exclusive create
+      } catch {
+        return; // another process holds the lock, skip trim
+      }
+      try {
+        const trimmed = lines.slice(-MAX_MEMORY_LINES).join("\n") + "\n";
+        const tmp = file + "." + randomUUID().slice(0, 8);
+        writeFileSync(tmp, trimmed);
+        renameSync(tmp, file); // atomic on same filesystem
+      } finally {
+        try { unlinkSync(lockFile); } catch { /* best effort */ }
+      }
     }
   } catch (err) {
     throw new Error(`Branchwise: failed to write to ${file}: ${err}`);
@@ -170,7 +200,8 @@ export function list(hash: string): BranchInfo[] {
       if (file === DETACHED_DIR) continue;
       if (!file.endsWith(".md")) continue;
       const filePath = join(dir, file);
-      const stat = statSync(filePath);
+      const stat = lstatSync(filePath);
+      if (stat.isSymbolicLink()) continue; // skip symlinks
       const content = readFileSync(filePath, "utf-8");
       results.push({
         branch: decodeBranchName(file.replace(".md", "")),
@@ -185,7 +216,8 @@ export function list(hash: string): BranchInfo[] {
       for (const file of readdirSync(detachedDir)) {
         if (!file.endsWith(".md")) continue;
         const filePath = join(detachedDir, file);
-        const stat = statSync(filePath);
+        const stat = lstatSync(filePath);
+        if (stat.isSymbolicLink()) continue; // skip symlinks
         const content = readFileSync(filePath, "utf-8");
         results.push({
           branch: `_detached/${file.replace(".md", "")}`,
@@ -205,6 +237,8 @@ export function remove(hash: string, branch: string): boolean {
   const file = branchFile(hash, branch);
   try {
     if (!existsSync(file)) return false;
+    if (lstatSync(file).isSymbolicLink()) return false;
+    if (!isPathSafe(file)) return false;
     unlinkSync(file);
     return true;
   } catch {

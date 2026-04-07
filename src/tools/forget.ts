@@ -3,7 +3,7 @@ import * as storage from "../storage.js";
 import { getGitCommonDir, isGitRepo } from "../git.js";
 
 export const schema = z.object({
-  branch: z.string().describe("Branch name whose memory to delete"),
+  branch: z.string().min(1).max(500).describe("Branch name whose memory to delete"),
 });
 
 export type Input = z.infer<typeof schema>;
