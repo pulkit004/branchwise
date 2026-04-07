@@ -1,12 +1,12 @@
 # branchwise
 
-Branch-scoped memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Isolate conversation context per git branch — no more memory pollution across features, bugfixes, and experiments.
+Branch-scoped memory and sessions for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Isolate conversation context per git branch — no more memory pollution across features, bugfixes, and experiments.
 
 ## Problem
 
-Claude Code's built-in memory is scoped per repository, not per branch. When you work across multiple branches, debugging notes from a bugfix bleed into feature work, and architectural decisions from one feature get incorrectly applied to another.
+Claude Code's built-in memory is scoped per repository, not per branch. When you work across multiple branches, debugging notes from a bugfix bleed into feature work, and architectural decisions from one feature get incorrectly applied to another. And `claude --continue` resumes the most recent session globally — not the one from your current branch.
 
-**Branchwise** gives each git branch its own memory that auto-loads when you start a session and switches automatically when you change branches.
+**Branchwise** gives each git branch its own memory and session tracking. Memory auto-loads when you start a session, switches when you change branches, and `--continue` resumes the right branch's conversation.
 
 ## How It Works
 
@@ -14,26 +14,29 @@ Claude Code's built-in memory is scoped per repository, not per branch. When you
 ┌─────────────────────────────────────────────────┐
 │  Claude Code Session                            │
 │                                                 │
-│  SessionStart hook ──► Load branch memory       │
+│  SessionStart hook ──► Load memory + track session
 │  UserPromptSubmit  ──► Detect branch switch     │
 │  MCP Tools         ──► Read/write branch memory │
 │  SKILL.md          ──► Auto-save decisions       │
+│  bw wrapper        ──► Resume correct session   │
 └─────────────────────────────────────────────────┘
          │
          ▼
 ~/.claude/branch-memory/<project-hash>/
+  .sessions/
+    main                  ← session ID (plain text)
+    feat%2Fauth-flow
   branches/
-    main.md
+    main.md               ← memory entries (markdown)
     feat%2Fauth-flow.md
-    fix%2Fnull-pointer.md
     _detached/
       abc1234.md
 ```
 
 Three layers:
-1. **Hooks** — Auto-load memory at session start; detect mid-session branch switches
+1. **Hooks** — Auto-load memory at session start; detect mid-session branch switches; track session IDs
 2. **MCP Server** — 5 tools Claude can call to read/write/manage branch memory
-3. **CLI** — Manual operations outside Claude Code
+3. **CLI + `bw` wrapper** — Manual operations and branch-aware `--continue`
 
 Plus **auto-save**: Claude proactively saves important decisions, debug findings, and patterns without you asking.
 
@@ -90,32 +93,17 @@ Add hooks to `~/.claude/settings.json`:
 }
 ```
 
-## Branch-Scoped Sessions (v0.3)
+### Enable branch-scoped sessions
 
-`claude --continue` normally resumes the most recent session globally. With the `bw` wrapper, it resumes the session from your **current branch**.
-
-### Setup
+Add this alias to your shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
-# Add to your shell profile (~/.zshrc or ~/.bashrc):
 alias claude='bw'
 ```
 
-That's it. Now `claude --continue` and `claude -c` automatically resume the correct branch's session. All other flags pass through untouched.
+Now `claude --continue` and `claude -c` automatically resume the correct branch's session. All other flags pass through to the real `claude` binary untouched.
 
-### How it works
-
-1. The SessionStart hook captures each session's ID and stores it per branch
-2. `bw` intercepts `--continue`/`-c`, looks up the stored session ID for the current branch, and calls `claude --resume <id>` instead
-3. Every fallback passes through to the real `claude` binary — nothing breaks if there's no stored session
-
-### CLI
-
-```bash
-branchwise session             # Show stored session ID for current branch
-branchwise session --all       # Show all branch → session mappings
-branchwise session --clear     # Remove mapping for current branch
-```
+**How it works:** The SessionStart hook captures each session's ID and stores it per branch. When you run `claude --continue`, the `bw` wrapper looks up the stored session ID for your current branch and calls `claude --resume <id>` instead. If there's no stored session, it falls back to normal `--continue` behavior.
 
 ## Usage
 
@@ -123,6 +111,7 @@ branchwise session --clear     # Remove mapping for current branch
 
 Just start a Claude Code session. Branchwise automatically:
 - Loads memory for your current branch
+- Tracks the session ID for later `--continue`
 - Detects when you `git checkout` to another branch mid-session
 - Injects the new branch's memory into context
 - Saves important decisions and findings as you work
@@ -165,11 +154,12 @@ branchwise show [branch]     # Show memory (default: current branch)
 branchwise add "entry"       # Add entry to current branch
 branchwise clear [branch]    # Clear a branch's memory
 branchwise gc                # Remove memories for deleted branches
+branchwise session           # Show stored session ID for current branch
+branchwise session --all     # Show all branch → session mappings
+branchwise session --clear   # Remove session mapping for current branch
 ```
 
 ## Storage
-
-Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
 
 ```
 ~/.claude/branch-memory/
@@ -198,7 +188,8 @@ Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
 ## Security
 
 - **Path traversal**: Branch names encoded with `encodeURIComponent`; detached HEAD SHAs sanitized with `basename()`
-- **Symlink attacks**: All reads/writes use `lstatSync` to detect and skip symlinks; `realpathSync` validates paths stay within storage directory
+- **Symlink attacks**: All reads/writes/deletes use `lstatSync` to detect and skip symlinks; `realpathSync` validates paths stay within storage directory
+- **Argument injection**: Session IDs validated against `^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$` — must start with alphanumeric, preventing `--flag` injection
 - **Shell injection**: No user input interpolated into shell commands; git helpers use `execSync` with hardcoded commands and `cwd` option
 - **JSON injection**: Hook output escapes all control characters (U+0000–U+001F) per JSON spec
 - **Input validation**: Zod schemas enforce max lengths (10K for entries, 500 for branch names)
@@ -214,6 +205,8 @@ Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
 | Git worktrees | All worktrees of same repo share memory (normalized via git common dir) |
 | No git repo | Gracefully no-ops |
 | Detached HEAD GC | Auto-cleaned after 30 days |
+| No stored session | `bw` falls back to normal `claude --continue` |
+| Non-git directory | `bw` passes through to `claude` unchanged |
 
 ## Development
 
