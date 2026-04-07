@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# bw — branch-aware wrapper for claude.
+# Intercepts --continue/-c and resumes the correct branch session.
+# All other flags pass through untouched.
+#
+# Usage: alias claude='bw'
+
+set -euo pipefail
+
+# Find the real claude binary (bypasses alias)
+CLAUDE=$(command -v claude 2>/dev/null || true)
+if [ -z "$CLAUDE" ]; then
+  echo "bw: claude not found in PATH" >&2
+  exit 1
+fi
+
+# Check if --continue or -c is in args
+HAS_CONTINUE=false
+for arg in "$@"; do
+  [[ "$arg" == "--continue" || "$arg" == "-c" ]] && HAS_CONTINUE=true
+done
+
+if ! $HAS_CONTINUE; then
+  exec "$CLAUDE" "$@"
+fi
+
+# --- Resolve branch session ---
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source shared utilities
+# shellcheck source=../hooks-handlers/lib.sh
+source "$PLUGIN_ROOT/hooks-handlers/lib.sh"
+
+# Must be on a named branch
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+if [ -z "$BRANCH" ]; then
+  exec "$CLAUDE" "$@"
+fi
+
+# Resolve project hash
+COMMON_DIR=$(resolve_common_dir 2>/dev/null) || exec "$CLAUDE" "$@"
+PROJECT_HASH=$(get_project_hash "$COMMON_DIR")
+SESSIONS_DIR="$HOME/.claude/branch-memory/$PROJECT_HASH/.sessions"
+
+if [ ! -d "$SESSIONS_DIR" ]; then
+  exec "$CLAUDE" "$@"
+fi
+
+# Look up session ID for current branch (per-file storage)
+ENCODED_BRANCH=$(uri_encode "$BRANCH")
+SESSION_FILE="$SESSIONS_DIR/$ENCODED_BRANCH"
+SESSION_ID=$(cat "$SESSION_FILE" 2>/dev/null || true)
+
+if [ -z "$SESSION_ID" ]; then
+  exec "$CLAUDE" "$@"
+fi
+
+# Replace --continue/-c with --resume <session-id>
+ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--continue" || "$arg" == "-c" ]]; then
+    ARGS+=("--resume" "$SESSION_ID")
+  else
+    ARGS+=("$arg")
+  fi
+done
+
+exec "$CLAUDE" "${ARGS[@]}"

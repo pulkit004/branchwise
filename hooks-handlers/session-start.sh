@@ -7,6 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
+# --- Read hook input (contains session metadata) ---
+
+HOOK_INPUT=$(cat 2>/dev/null || true)
+SESSION_ID=$(printf '%s' "$HOOK_INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
 # --- Main ---
 
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || true)
@@ -36,6 +41,21 @@ fi
 # Save current branch for switch detection
 mkdir -p "$BASE_DIR/branches/_detached" 2>/dev/null || true
 printf '%s' "$BRANCH" > "$BASE_DIR/.current-branch" 2>/dev/null || true
+
+# Store session-to-branch mapping for branch-scoped session resume
+if [ -n "$SESSION_ID" ]; then
+  SESSIONS_DIR="$BASE_DIR/.sessions"
+  mkdir -p "$SESSIONS_DIR" 2>/dev/null || true
+
+  if [[ "$BRANCH" == _detached/* ]]; then
+    SESSION_FILE="$SESSIONS_DIR/_detached_${BRANCH#_detached/}"
+  else
+    ENCODED_BRANCH=$(uri_encode "$BRANCH")
+    SESSION_FILE="$SESSIONS_DIR/$ENCODED_BRANCH"
+  fi
+
+  printf '%s' "$SESSION_ID" > "$SESSION_FILE" 2>/dev/null || true
+fi
 
 ESCAPED_BRANCH=$(json_escape "$BRANCH")
 

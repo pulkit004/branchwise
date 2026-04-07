@@ -10,7 +10,7 @@ import * as gcTool from "./tools/gc.js";
 
 const server = new McpServer({
   name: "branchwise",
-  version: "0.2.1",
+  version: "0.3.0",
 });
 
 server.tool(

@@ -19,6 +19,7 @@ import {
   BRANCHES_DIR,
   DETACHED_DIR,
   DETACHED_MAX_AGE_MS,
+  SESSIONS_DIR,
 } from "./constants.js";
 import { getGitCommonDir, listLocalBranches } from "./git.js";
 
@@ -269,4 +270,84 @@ export function gc(hash: string, cwd?: string): string[] {
   }
 
   return removed;
+}
+
+// --- Session ID tracking ---
+
+function sessionsDir(hash: string): string {
+  return join(projectDir(hash), SESSIONS_DIR);
+}
+
+function sessionFile(hash: string, branch: string): string {
+  if (branch.startsWith("_detached/")) {
+    const sha = basename(branch.replace("_detached/", ""));
+    return join(sessionsDir(hash), `_detached_${sha}`);
+  }
+  return join(sessionsDir(hash), encodeBranchName(branch));
+}
+
+export function readSessionId(hash: string, branch: string): string | null {
+  const file = sessionFile(hash, branch);
+  try {
+    if (!existsSync(file)) return null;
+    if (lstatSync(file).isSymbolicLink()) return null;
+    return readFileSync(file, "utf-8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSessionId(hash: string, branch: string, sessionId: string): void {
+  const dir = sessionsDir(hash);
+  ensureDir(dir);
+  const file = sessionFile(hash, branch);
+
+  if (!isPathSafe(file)) return;
+  if (existsSync(file) && lstatSync(file).isSymbolicLink()) return;
+
+  try {
+    writeFileSync(file, sessionId);
+  } catch {
+    // non-fatal — session tracking is best-effort
+  }
+}
+
+export function listSessions(hash: string): Record<string, string> {
+  const dir = sessionsDir(hash);
+  if (!existsSync(dir)) return {};
+
+  const results: Record<string, string> = {};
+  try {
+    for (const file of readdirSync(dir)) {
+      const filePath = join(dir, file);
+      const stat = lstatSync(filePath);
+      if (stat.isSymbolicLink()) continue;
+
+      const sessionId = readFileSync(filePath, "utf-8").trim();
+      if (!sessionId) continue;
+
+      let branch: string;
+      if (file.startsWith("_detached_")) {
+        branch = `_detached/${file.replace("_detached_", "")}`;
+      } else {
+        branch = decodeBranchName(file);
+      }
+      results[branch] = sessionId;
+    }
+  } catch {
+    // partial results are fine
+  }
+  return results;
+}
+
+export function clearSessionId(hash: string, branch: string): boolean {
+  const file = sessionFile(hash, branch);
+  try {
+    if (!existsSync(file)) return false;
+    if (lstatSync(file).isSymbolicLink()) return false;
+    unlinkSync(file);
+    return true;
+  } catch {
+    return false;
+  }
 }

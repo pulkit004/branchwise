@@ -90,6 +90,33 @@ Add hooks to `~/.claude/settings.json`:
 }
 ```
 
+## Branch-Scoped Sessions (v0.3)
+
+`claude --continue` normally resumes the most recent session globally. With the `bw` wrapper, it resumes the session from your **current branch**.
+
+### Setup
+
+```bash
+# Add to your shell profile (~/.zshrc or ~/.bashrc):
+alias claude='bw'
+```
+
+That's it. Now `claude --continue` and `claude -c` automatically resume the correct branch's session. All other flags pass through untouched.
+
+### How it works
+
+1. The SessionStart hook captures each session's ID and stores it per branch
+2. `bw` intercepts `--continue`/`-c`, looks up the stored session ID for the current branch, and calls `claude --resume <id>` instead
+3. Every fallback passes through to the real `claude` binary — nothing breaks if there's no stored session
+
+### CLI
+
+```bash
+branchwise session             # Show stored session ID for current branch
+branchwise session --all       # Show all branch → session mappings
+branchwise session --clear     # Remove mapping for current branch
+```
+
 ## Usage
 
 ### Automatic (zero effort)
@@ -149,6 +176,10 @@ Memory files live at `~/.claude/branch-memory/<project-hash>/branches/`:
   a1b2c3d4e5f6/              # SHA-256 hash of git common dir (first 12 chars)
     _meta.json                # { repoPath, createdAt }
     .current-branch           # Tracks branch for switch detection
+    .sessions/
+      main                    # Session ID for branch (plain text)
+      feat%2Fauth-flow        # URI-encoded branch name
+      _detached_abc1234       # Detached HEAD session
     branches/
       main.md                 # One markdown file per branch
       feat%2Fauth-flow.md     # "/" URI-encoded as "%2F" (fully reversible)

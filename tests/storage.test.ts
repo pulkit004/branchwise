@@ -9,6 +9,10 @@ import {
   read,
   list,
   remove,
+  writeSessionId,
+  readSessionId,
+  listSessions,
+  clearSessionId,
 } from "../src/storage.js";
 import { BRANCHWISE_DIR } from "../src/constants.js";
 
@@ -174,5 +178,63 @@ describe("storage operations", () => {
     // Should keep the latest entries
     expect(content).toContain("entry 209");
     expect(content).not.toContain("entry 0");
+  });
+});
+
+describe("session ID tracking", () => {
+  const testHash = "sess_" + Date.now().toString(36);
+
+  afterEach(() => {
+    const testDir = join(BRANCHWISE_DIR, testHash);
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true });
+    }
+  });
+
+  it("writeSessionId + readSessionId round-trip", () => {
+    writeSessionId(testHash, "main", "session-abc123");
+    expect(readSessionId(testHash, "main")).toBe("session-abc123");
+  });
+
+  it("writeSessionId overwrites previous session for same branch", () => {
+    writeSessionId(testHash, "main", "session-old");
+    writeSessionId(testHash, "main", "session-new");
+    expect(readSessionId(testHash, "main")).toBe("session-new");
+  });
+
+  it("readSessionId returns null for unknown branch", () => {
+    writeSessionId(testHash, "main", "session-abc");
+    expect(readSessionId(testHash, "feat/auth")).toBeNull();
+  });
+
+  it("readSessionId returns null when no sessions file exists", () => {
+    expect(readSessionId(testHash, "main")).toBeNull();
+  });
+
+  it("listSessions returns full mapping", () => {
+    writeSessionId(testHash, "main", "session-1");
+    writeSessionId(testHash, "feat/auth", "session-2");
+    const sessions = listSessions(testHash);
+    expect(sessions).toEqual({
+      "main": "session-1",
+      "feat/auth": "session-2",
+    });
+  });
+
+  it("listSessions returns empty object when no file", () => {
+    expect(listSessions(testHash)).toEqual({});
+  });
+
+  it("clearSessionId removes a branch mapping", () => {
+    writeSessionId(testHash, "main", "session-1");
+    writeSessionId(testHash, "dev", "session-2");
+    expect(clearSessionId(testHash, "main")).toBe(true);
+    expect(readSessionId(testHash, "main")).toBeNull();
+    expect(readSessionId(testHash, "dev")).toBe("session-2");
+  });
+
+  it("clearSessionId returns false for nonexistent branch", () => {
+    writeSessionId(testHash, "main", "session-1");
+    expect(clearSessionId(testHash, "nonexistent")).toBe(false);
   });
 });

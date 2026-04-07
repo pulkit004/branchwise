@@ -1,6 +1,6 @@
 {
   "name": "branchwise",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Branch-scoped memory for Claude Code — isolate conversation context per git branch",
   "author": "pulkitverma",
   "homepage": "https://github.com/pulkitverma/branchwise",

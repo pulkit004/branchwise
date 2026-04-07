@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dist = join(__dirname, "..", "dist");
 
-const { encodeBranchName, decodeBranchName, projectHash, append, read, list, remove, gc } = await import(join(dist, "storage.js"));
+const { encodeBranchName, decodeBranchName, projectHash, append, read, list, remove, gc, readSessionId, listSessions, clearSessionId } = await import(join(dist, "storage.js"));
 const { getCurrentBranch, getGitCommonDir, getDetachedCommit, isGitRepo } = await import(join(dist, "git.js"));
 
 // --- Helpers ---
@@ -103,6 +103,42 @@ function cmdGc() {
   }
 }
 
+function cmdSession(flag) {
+  const { hash, branch } = getContext();
+
+  if (flag === "--all") {
+    const sessions = listSessions(hash);
+    const entries = Object.entries(sessions);
+    if (entries.length === 0) {
+      console.log("No session mappings stored.");
+      return;
+    }
+    console.log("Branch → Session mappings:\n");
+    for (const [b, id] of entries) {
+      const marker = b === branch ? " (current)" : "";
+      console.log(`  ${b} → ${id}${marker}`);
+    }
+    return;
+  }
+
+  if (flag === "--clear") {
+    if (clearSessionId(hash, branch)) {
+      console.log(`Cleared session mapping for "${branch}".`);
+    } else {
+      console.log(`No session mapping found for "${branch}".`);
+    }
+    return;
+  }
+
+  const sessionId = readSessionId(hash, branch);
+  if (sessionId) {
+    console.log(`Branch "${branch}" → session ${sessionId}`);
+    console.log(`\nResume with: claude --resume "${sessionId}"`);
+  } else {
+    console.log(`No session stored for "${branch}".`);
+  }
+}
+
 function printHelp() {
   console.log(`
 branchwise — Branch-scoped memory for Claude Code
@@ -113,6 +149,9 @@ Usage:
   branchwise add <entry>       Add an entry to current branch memory
   branchwise clear [branch]    Clear memory for a branch
   branchwise gc                Remove memories for deleted branches
+  branchwise session           Show stored session for current branch
+  branchwise session --all     Show all branch → session mappings
+  branchwise session --clear   Clear session mapping for current branch
   branchwise help              Show this help
 `);
 }
@@ -127,6 +166,7 @@ switch (command) {
   case "add":     cmdAdd(rest.join(" ")); break;
   case "clear":   cmdClear(rest[0]); break;
   case "gc":      cmdGc(); break;
+  case "session": cmdSession(rest[0]); break;
   case "help":
   case "--help":
   case "-h":
