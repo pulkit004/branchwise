@@ -1,6 +1,6 @@
 {
   "name": "branchwise",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Branch-scoped memory for Claude Code — isolate conversation context per git branch",
   "type": "module",
   "engines": {
