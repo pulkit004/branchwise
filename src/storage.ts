@@ -291,13 +291,18 @@ export function readSessionId(hash: string, branch: string): string | null {
   try {
     if (!existsSync(file)) return null;
     if (lstatSync(file).isSymbolicLink()) return null;
+    if (!isPathSafe(file)) return null;
     return readFileSync(file, "utf-8").trim() || null;
   } catch {
     return null;
   }
 }
 
+const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$/;
+
 export function writeSessionId(hash: string, branch: string, sessionId: string): void {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return;
+
   const dir = sessionsDir(hash);
   ensureDir(dir);
   const file = sessionFile(hash, branch);
@@ -322,6 +327,7 @@ export function listSessions(hash: string): Record<string, string> {
       const filePath = join(dir, file);
       const stat = lstatSync(filePath);
       if (stat.isSymbolicLink()) continue;
+      if (!isPathSafe(filePath)) continue;
 
       const sessionId = readFileSync(filePath, "utf-8").trim();
       if (!sessionId) continue;
@@ -345,6 +351,7 @@ export function clearSessionId(hash: string, branch: string): boolean {
   try {
     if (!existsSync(file)) return false;
     if (lstatSync(file).isSymbolicLink()) return false;
+    if (!isPathSafe(file)) return false;
     unlinkSync(file);
     return true;
   } catch {

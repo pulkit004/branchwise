@@ -51,17 +51,26 @@ fi
 # Look up session ID for current branch (per-file storage)
 ENCODED_BRANCH=$(uri_encode "$BRANCH")
 SESSION_FILE="$SESSIONS_DIR/$ENCODED_BRANCH"
-SESSION_ID=$(cat "$SESSION_FILE" 2>/dev/null || true)
 
-if [ -z "$SESSION_ID" ]; then
+# Skip symlinks
+if [ -L "$SESSION_FILE" ]; then
   exec "$CLAUDE" "$@"
 fi
 
-# Replace --continue/-c with --resume <session-id>
+SESSION_ID=$(cat "$SESSION_FILE" 2>/dev/null || true)
+
+# Validate session ID format (must start with alphanumeric, prevents flag injection)
+if [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$ ]]; then
+  exec "$CLAUDE" "$@"
+fi
+
+# Replace first --continue/-c with --resume <session-id>
 ARGS=()
+REPLACED=false
 for arg in "$@"; do
-  if [[ "$arg" == "--continue" || "$arg" == "-c" ]]; then
+  if ! $REPLACED && [[ "$arg" == "--continue" || "$arg" == "-c" ]]; then
     ARGS+=("--resume" "$SESSION_ID")
+    REPLACED=true
   else
     ARGS+=("$arg")
   fi

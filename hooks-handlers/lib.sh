@@ -56,5 +56,9 @@ resolve_common_dir() {
 }
 
 get_project_hash() {
-  printf '%s' "$1" | shasum -a 256 | cut -c1-12
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | cut -c1-12
+  else
+    printf '%s' "$1" | shasum -a 256 | cut -c1-12
+  fi
 }

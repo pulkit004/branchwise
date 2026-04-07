@@ -9,8 +9,13 @@ source "$SCRIPT_DIR/lib.sh"
 
 # --- Read hook input (contains session metadata) ---
 
-HOOK_INPUT=$(cat 2>/dev/null || true)
+HOOK_INPUT=$(cat 2>/dev/null | tr -d '\n' || true)
 SESSION_ID=$(printf '%s' "$HOOK_INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+# Validate session ID format (must start with alphanumeric, prevents flag injection)
+if [[ -n "$SESSION_ID" ]] && ! [[ "$SESSION_ID" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+  SESSION_ID=""
+fi
 
 # --- Main ---
 
